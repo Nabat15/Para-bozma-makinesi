@@ -1,0 +1,501 @@
+#include <stdint.h>
+#include "inc/tm4c123gh6pm.h"
+#include <stdlib.h>
+#include <stdbool.h>
+#include "driverlib/sysctl.h"
+#include "time.h"
+//D portu kontrol pinleri olarak kullanýlan RS(register select) ve E(enable) pinleri içindir.
+void init_PORT_D(){
+
+	volatile unsigned long tmp;
+	SYSCTL_RCGC2_R |= SYSCTL_RCGC2_GPIOD; // Port D’yi aktiflestirir.
+	tmp = SYSCTL_RCGC2_R;  	// zaman gecirmek icin.
+
+	GPIO_PORTD_DIR_R |= 0x03;	 // PortD 1,0 pinlerini cikis yapar.
+	GPIO_PORTD_AFSEL_R &= ~0x03; // PortD 1,0 pinlerinin alternatif fonksiyonlarýný kapatýr.
+	GPIO_PORTD_DEN_R |= 0x03;	 // PortD 1,0 pinlerini dijital olarak aktifleþtirir.
+}
+
+//B portu Lcd 'nin 4 bitlik veri yolu içindir.
+void init_PORT_B(){
+
+	volatile unsigned long tmp;
+    SYSCTL_RCGC2_R |= SYSCTL_RCGC2_GPIOB; // Port B’yi aktiflestirir
+	tmp = SYSCTL_RCGC2_R;  	// zaman gecirmek icin.
+
+	GPIO_PORTB_DIR_R |= 0x0F;    // PortB 3,2,1,0 pinlerini cikis yapar.
+    GPIO_PORTB_AFSEL_R &= ~0x0F; // PortB 3,2,1,0 pinlerininin alternatif fonksiyonlarýný kapatýr.
+	GPIO_PORTB_DEN_R |= 0x0F;	 // PortB 3,2,1,0 pinlerini dijital olarak aktifleþtirir.
+}
+
+//Bu fonksyon Lcd ile ilgili ayarlarý yapar.
+void init_LCD()
+{
+
+	GPIO_PORTD_DATA_R=0x00; //Lcd 'nin RS ve E baðlantýlarýnýn bulunduðu portun deðerlerini sýfýr yapar.
+	GPIO_PORTB_DATA_R=0x00; //Lcd 'nin veri baðlantýlarýnýn bulunduðu portun deðerlerini sýfýr yapar.
+
+     SysCtlDelay(50000); // Ýlk komuttan önce biraz beklenir.
+
+     Lcd_komut(0x03); //Lcd yi aktifeþtirmek için 3 kez Lcd ye 0x03 deðeri gönderilir.
+     Lcd_komut(0x03);
+     Lcd_komut(0x03);
+     Lcd_komut(0x02); //Bir kez 0x02 degeri gönderilir.
+
+     SysCtlDelay(50000); //bekleme
+
+     Lcd_komut(0x28); // Lcd yi 4 bitlik 2 satýrlýk ve 5*7 li matris olarak ayarlar.
+     Lcd_komut(0x06); //Giris modu(Entry Mode)
+     Lcd_komut(0x0C); //Ýmlecte goruntuleme (Display on cursor off)
+     Lcd_komut(0x01); //Ekraný acma(Display clear)
+
+}
+
+
+//Lcd nin imlecini verilen satir ve sutuna götürür.
+void Lcd_imlec(int satir, int sutun){
+
+        if(satir==1)
+                Lcd_komut(0x80+sutun);
+        else
+                Lcd_komut(0xC0+sutun);
+}
+
+//Gönderilen komutu Lcd nin 4 bitlik veri yoluna gönderir.
+void Lcd_komut(unsigned char c)
+{
+    SysCtlDelay(50000);
+
+	GPIO_PORTD_DATA_R &= ~(0x01);	 //Komut gönderimi içiçn RS pini 0 olarak ayarlanýr.
+	GPIO_PORTB_DATA_R=(c & 0xf0)>>4; //Önce en yüksek deðerlikli 4 bit lcd nin 4 bitlik veri yoluna gönderilir.
+	GPIO_PORTD_DATA_R |=0x02;        //Komutun yazýlmasý için gereken negatif kenar tetiklemesi yapýlýr. (E=1 yapýlýr)
+	GPIO_PORTD_DATA_R &=~(0x02);	 //(E=0 yapýlýr)
+
+	SysCtlDelay(50000);
+
+	GPIO_PORTD_DATA_R &= ~(0x01);
+	GPIO_PORTB_DATA_R=c & 0x0f;      // Sonra en düþük deðerlikli 4 bit veri yoluna gönderilir.
+	GPIO_PORTD_DATA_R |=0x02;
+	GPIO_PORTD_DATA_R &=~(0x02);
+
+
+
+
+}
+
+//Bu fonksiyon gelen veriyi lcd ye göndererek ekrana çýkmasýný saðlar.
+void Lcd_harf_yaz(unsigned char d)
+{
+    SysCtlDelay(50000);
+
+	GPIO_PORTD_DATA_R |=(0x01); 	 // Veri gönderildiði için RS ucu 1 yapýlýr.
+	GPIO_PORTB_DATA_R=(d & 0xf0)>>4;//once yuksek biti alir
+	GPIO_PORTD_DATA_R |=0x02;         //E aktiflestirir
+	GPIO_PORTD_DATA_R &=~(0x02);        //Alternatif kapatýlýr
+
+	SysCtlDelay(50000);                  // Gecikme
+
+	GPIO_PORTD_DATA_R |= (0x01);          //RS aktifleþtir
+	GPIO_PORTB_DATA_R=d & 0x0f;           // düþük biti gonder
+	GPIO_PORTD_DATA_R |=0x02;              //E aktiflestir
+	GPIO_PORTD_DATA_R &=~(0x02);           // Alternatif kapatilir
+
+
+
+
+}
+
+//Gönderilen stringin tüm karakterleri \0 karakterine kadar tek tek ekrana yazdýrýlýr.
+void kelime_yaz(char * s)
+{
+	while((*s)!='\0')        // entr'a gelene kadar calýstýr
+	{
+		Lcd_harf_yaz(*s);
+		s++;
+	}
+
+
+}
+
+
+//A portu butonlar içindir.
+
+void init_PORT_A() {
+volatile unsigned long tmp; // bu degisken gecikme yapmak icin gerekli
+SYSCTL_RCGC2_R |= SYSCTL_RCGC2_GPIOA;  // Port E’nin saatini aktifleþtir
+tmp = SYSCTL_RCGCGPIO_R; // Saatin baþlamasý için gecikme
+GPIO_PORTA_LOCK_R = 0x4C4F434B; // Port F GPIO kilidini aç
+GPIO_PORTA_CR_R = 0xFF; // PE5-0 kilidini aç (Sadece PFE0 kilitlidir, diðer bitler kilitli deðildir.)
+GPIO_PORTA_AMSEL_R = 0x00;        // 3) disable analog on PE
+ GPIO_PORTA_PCTL_R = 0x00000000;   // 4) PCTL GPIO on PE3-0
+ GPIO_PORTA_DIR_R = 0x00;          // 5) PE3-0 out 1den 5de giris (giris=0)
+ GPIO_PORTA_AFSEL_R = 0x00;        // 6) disable alt funct on PE7-0
+ GPIO_PORTA_PUR_R = 0xFF;          // enable pull-up on PE0-3(PE 1,2,3,4,5 etkinleþtir (buton icin))
+ GPIO_PORTA_DEN_R = 0xFF;          // 7) enable digital I/O on PE5-0
+}
+//E portu LED ler için
+void init_PORT_E(){
+
+	volatile unsigned long tmp;
+    SYSCTL_RCGC2_R |= SYSCTL_RCGC2_GPIOE; // Port B’yi aktiflestirir
+	tmp = SYSCTL_RCGC2_R;  	// zaman gecirmek icin.
+
+	GPIO_PORTE_DIR_R |= 0xFF;    // PortB 3,2,1,0 pinlerini cikis yapar.
+    GPIO_PORTE_AFSEL_R &= ~0xFF; // PortB 3,2,1,0 pinlerininin alternatif fonksiyonlarýný kapatýr.
+	GPIO_PORTE_DEN_R |= 0xFF;	 // PortB 3,2,1,0 pinlerini dijital olarak aktifleþtirir.
+}
+
+
+int main(void){
+	 volatile unsigned long delay;       //zaman degiþkeni
+	 volatile unsigned int basili=0;         //zaman degiþkeni
+	 volatile unsigned int gecici_z=0;      //zaman degiskeni
+	 volatile unsigned int basili_degil=0;    //zaman degiþkeni
+	 init_PORT_A();             // metodlar cagirilir
+	 init_PORT_E();
+	 init_PORT_D();
+	 init_PORT_B();
+	 init_LCD();
+char sayi[16]="PARA GIR:       ";
+char yaz[16];                                          //degiskenler
+int yuz_s=-1,on_s=-1,nokta_s='.',onda_s=-1,yuzde_s=-1;
+char yazdir[16];
+int dogal,kesirli,bol,gecici,i;
+int buton_1,buton_2,buton_3,buton_4,buton_5,deger,deger2;
+// Buton sayi girme Algoritmasi
+while(1){                                        // buton calýsmasý için dongu yaplýr
+buton_1= GPIO_PORTA_DATA_R & 0x04;                //A port 2.pin buton_1 aktar;
+buton_2= GPIO_PORTA_DATA_R & 0x08;                 //A port 3.pin
+buton_3= GPIO_PORTA_DATA_R & 0x10;                  // A port 4 pin
+buton_4= GPIO_PORTA_DATA_R & 0x20;                 //A port 5. pin
+buton_5= GPIO_PORTA_DATA_R & 0x40;                 //A port 6.pin
+
+
+if(buton_1==0){                               // buton_1 basýlý ise
+	GPIO_PORTE_DATA_R |= 0b0000001;               //E port 0.pin aktifleþtir led i yak
+	for (delay = 0 ; delay < 400000 ; delay++);    // gecikme
+	GPIO_PORTE_DATA_R &= ~(0b0000001);             //ledi sondur
+	yuz_s++;
+	sayi[11]=yuz_s+'0';
+	if(yuz_s==10){
+		yuz_s=0;
+		sayi[11]='0';
+	}
+ 	 Lcd_imlec(1,0);
+ 	 kelime_yaz(sayi);
+
+}
+if(buton_2==0){
+	    GPIO_PORTE_DATA_R |= 0b0000010;
+		for (delay = 0 ; delay < 400000 ; delay++);
+		GPIO_PORTE_DATA_R &= ~(0b0000010);
+		on_s++;
+		sayi[12]=on_s+'0';
+		if(on_s==10){
+			on_s=0;
+			sayi[12]='0';
+		}
+	 	  Lcd_imlec(1,0);
+	 	 kelime_yaz(sayi);
+}
+if(buton_3==0){
+	basili++;
+	if(basili>400000){
+deger=0;
+		strcpy(sayi,"PARA GIR:  00.00");
+	 	  Lcd_imlec(1,0);
+	 	 kelime_yaz(sayi);
+	 	gecici_z=basili;
+	 	basili=0;
+	}else if(gecici_z<400000){
+		deger=1;
+	}
+
+
+}
+else if(deger==1&&gecici_z<400000){  // basýlý kalma suresi 400000 kucuk ise nokta koy buyuk ise resetle
+	deger=0;
+basili=0;
+		GPIO_PORTE_DATA_R |= 0b0000100;
+			for (delay = 0 ; delay < 400000 ; delay++);
+			GPIO_PORTE_DATA_R &= ~(0b0000100);
+
+			sayi[13]='.';
+		 	  Lcd_imlec(1,0);
+		 	 kelime_yaz(sayi);
+
+}
+
+if(buton_4==0){
+    GPIO_PORTE_DATA_R |= 0b0001000;
+	for (delay = 0 ; delay < 400000 ; delay++);
+	GPIO_PORTE_DATA_R &= ~(0b0001000);
+	onda_s++;
+	sayi[14]=onda_s+'0';
+	if(onda_s==10){
+		onda_s=0;
+		sayi[14]='0';
+	}
+ 	  Lcd_imlec(1,0);
+ 	 kelime_yaz(sayi);
+}
+
+if(buton_5==0){
+    GPIO_PORTE_DATA_R |= 0b00010000;
+	for (delay = 0 ; delay < 400000 ; delay++);
+	GPIO_PORTE_DATA_R &= ~(0b00010000);
+	yuzde_s++;
+	sayi[15]=yuzde_s+'0';
+	if(yuzde_s==10){
+		yuzde_s=0;
+		sayi[15]='0';
+	}
+	  Lcd_imlec(1,0);
+	 kelime_yaz(sayi);
+}
+
+
+if(buton_1!=0||buton_2!=0||buton_3!=0||buton_4!=0||buton_5!=0){
+	basili_degil++;
+	if(basili_degil>5000000){           // 5sn basýlý degilse donguden çýkarak hesaplamaya baslar
+		deger2=0;
+		GPIO_PORTE_DATA_R |= 0b0000001;
+		for (delay = 0 ; delay < 400000 ; delay++);
+		GPIO_PORTE_DATA_R &= ~(0b0000001);
+		GPIO_PORTE_DATA_R |= 0b0000010;
+		for (delay = 0 ; delay < 400000 ; delay++);
+		GPIO_PORTE_DATA_R &= ~(0b0000010);
+		GPIO_PORTE_DATA_R |= 0b0000100;
+		for (delay = 0 ; delay < 400000 ; delay++);
+		GPIO_PORTE_DATA_R &= ~(0b0000100);
+		gecici_z=basili_degil;
+		basili_degil=0;
+		break;
+	}
+	if(gecici_z<5000000){
+		deger2=1;
+	}
+}else if(deger==1&&gecici_z<5000000){
+deger2=0;
+	continue;
+}
+}
+
+for(i=0;i<11;i++){
+	sayi[i]='-';
+}
+
+//Para bozdurma hesabi Algoritmasý
+dogal=(yuz_s*10)+on_s;
+kesirli=(onda_s*10)+yuzde_s;
+if(dogal>=20){
+strcpy(yazdir,"--yirmilik------");
+bol=dogal/20;
+yazdir[0]=bol+'0';
+dogal=dogal-(bol*20);
+gecici=dogal/10;
+sayi[11]=gecici+'0';
+gecici=dogal%10;
+sayi[12]=gecici+'0';
+gecici=kesirli/10;
+sayi[14]=gecici+'0';
+gecici=kesirli%10;
+sayi[15]=gecici+'0';
+if(bol!=0){
+    Lcd_imlec(1,0);
+	 kelime_yaz(sayi);
+    Lcd_imlec(2,0);
+	 kelime_yaz(yazdir);
+	for(delay=0;delay<3000000;delay++);
+
+}
+}
+if(dogal>=10){
+	strcpy(yazdir,"--onluk---------");
+bol=dogal/10;
+yazdir[0]=bol+'0';
+dogal=dogal-(bol*10);
+gecici=dogal/10;
+sayi[11]='-';
+gecici=dogal%10;
+sayi[12]=gecici+'0';
+gecici=kesirli/10;
+sayi[14]=gecici+'0';
+gecici=kesirli%10;
+sayi[15]=gecici+'0';
+if(bol!=0){
+    Lcd_imlec(1,0);
+	 kelime_yaz(sayi);
+    Lcd_imlec(2,0);
+	 kelime_yaz(yazdir);
+	 for(delay=0;delay<3000000;delay++);
+}
+}
+
+if(dogal>=5){
+	strcpy(yazdir,"--beslik--------");
+	bol=dogal/5;
+	yazdir[0]=bol+'0';
+	dogal=dogal-(bol*5);
+	gecici=dogal/10;
+	sayi[11]='-';
+	gecici=dogal%10;
+	sayi[12]=gecici+'0';
+	gecici=kesirli/10;
+	sayi[14]=gecici+'0';
+	gecici=kesirli%10;
+	sayi[15]=gecici+'0';
+	if(bol!=0){
+	    Lcd_imlec(1,0);
+		 kelime_yaz(sayi);
+	    Lcd_imlec(2,0);
+		 kelime_yaz(yazdir);
+		 for(delay=0;delay<3000000;delay++);
+
+	}
+}
+
+if(dogal<5){
+	strcpy(yazdir,"--birlik-------");
+	bol=dogal/1;
+	yazdir[0]=bol+'0';
+	dogal=dogal-(bol*1);
+	gecici=dogal/10;
+	sayi[11]='-';
+	gecici=dogal%10;
+	sayi[12]='-';
+	gecici=kesirli/10;
+	sayi[14]=gecici+'0';
+	gecici=kesirli%10;
+	sayi[15]=gecici+'0';
+	if(bol!=0){
+	    Lcd_imlec(1,0);
+		 kelime_yaz(sayi);
+	    Lcd_imlec(2,0);
+		 kelime_yaz(yazdir);
+		 for(delay=0;delay<3000000;delay++);
+
+	}
+}
+if(kesirli>=50){
+strcpy(yazdir,"--yarimlik------");
+bol=kesirli/50;
+yazdir[0]=bol+'0';
+kesirli=kesirli-(bol*50);
+gecici=kesirli/10;
+sayi[14]=gecici+'0';
+gecici=kesirli%10;
+sayi[15]=gecici+'0';
+if(bol!=0){
+    Lcd_imlec(1,0);
+	 kelime_yaz(sayi);
+    Lcd_imlec(2,0);
+	 kelime_yaz(yazdir);
+	 for(delay=0;delay<3000000;delay++);
+
+}
+}
+if(kesirli>=25){
+strcpy(yazdir,"--ceyreklik-----");
+bol=kesirli/25;
+yazdir[0]=bol+'0';
+kesirli=kesirli-(bol*25);
+gecici=kesirli/10;
+sayi[14]=gecici+'0';
+gecici=kesirli%10;
+sayi[15]=gecici+'0';
+if(bol!=0){
+    Lcd_imlec(1,0);
+	 kelime_yaz(sayi);
+    Lcd_imlec(2,0);
+	 kelime_yaz(yazdir);
+	 for(delay=0;delay<3000000;delay++);
+
+}
+}
+if(kesirli>=10){
+strcpy(yazdir,"--metelik-------");
+bol=kesirli/10;
+yazdir[0]=bol+'0';
+kesirli=kesirli-(bol*10);
+
+gecici=kesirli/10;
+sayi[14]=gecici+'0';
+gecici=kesirli%10;
+sayi[15]=gecici+'0';
+if(bol!=0){
+    Lcd_imlec(1,0);
+	 kelime_yaz(sayi);
+    Lcd_imlec(2,0);
+	 kelime_yaz(yazdir);
+	 for(delay=0;delay<3000000;delay++);
+
+}
+}
+if(kesirli>=5){
+strcpy(yazdir,"--delik---------");
+bol=kesirli/5;
+yazdir[0]=bol+'0';
+kesirli=kesirli-(bol*5);
+gecici=kesirli/10;
+sayi[14]=gecici+'0';
+gecici=kesirli%10;
+sayi[15]=gecici+'0';
+if(bol!=0){
+    Lcd_imlec(1,0);
+	 kelime_yaz(sayi);
+    Lcd_imlec(2,0);
+	 kelime_yaz(yazdir);
+	 for(delay=0;delay<3000000;delay++);
+
+}
+}
+if(kesirli<5){
+strcpy(yazdir,"--kurusluk------");
+bol=kesirli/1;
+yazdir[0]=bol+'0';
+kesirli=kesirli-(bol*1);
+gecici=kesirli/10;
+sayi[14]=gecici+'-';
+gecici=kesirli%10;
+sayi[15]=gecici+'-';
+if(bol!=0){
+    Lcd_imlec(1,0);
+	 kelime_yaz(sayi);
+    Lcd_imlec(2,0);
+	 kelime_yaz(yazdir);
+	 for(delay=0;delay<3000000;delay++);
+
+}
+}
+for(i=0;i<16;i++){
+	sayi[i]=' ';
+	if(i==11||i==12||i==14||i==15){
+		sayi[i]='0';
+	}
+
+}
+//iþlem sonrasý ekran temizleme
+while(1){
+buton_1= GPIO_PORTA_DATA_R & 0x04;
+buton_2= GPIO_PORTA_DATA_R & 0x08;
+buton_3= GPIO_PORTA_DATA_R & 0x10;
+buton_4= GPIO_PORTA_DATA_R & 0x20;
+buton_5= GPIO_PORTA_DATA_R & 0x40;
+if(buton_1==0 || buton_2==0||buton_3==0||buton_4==0||buton_5==0){
+    GPIO_PORTE_DATA_R |= 0b00010000;
+	for (delay = 0 ; delay < 400000 ; delay++);
+	GPIO_PORTE_DATA_R &= ~(0b00010000);
+    Lcd_imlec(1,0);
+	 kelime_yaz("                ");
+    Lcd_imlec(2,0);
+	 kelime_yaz("                ");
+	 for(delay=0;delay<500000;delay++);
+	break;
+}}
+Lcd_imlec(1,0);
+ kelime_yaz("     BITTI      ");
+Lcd_imlec(2,0);
+ kelime_yaz("                ");
+ for(delay=0;delay<500000;delay++);
+}
